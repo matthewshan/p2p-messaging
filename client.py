@@ -1,6 +1,27 @@
-import sys, re, socket, traceback, threading
+import sys, re, socket, traceback, threading, time
 from PyQt5.QtWidgets import QApplication, QDialog, QInputDialog, QHBoxLayout, QWidget, QSplitter, QPushButton, QLabel, QMainWindow, QVBoxLayout, QTextEdit, QLineEdit 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
+
+class ListenThread(QThread):
+    sig = pyqtSignal(object)
+
+    def __init__(self, socket):
+        QThread.__init__(self)
+        self.socket = socket
+
+    def listen(self):
+        with self.socket:
+            while(True):
+                print("while")
+                incoming = self.socket.recv(32000).decode()
+                if incoming == "<<<END CONNECTION>>>":
+                    self.socket.sendall("<<<END CONNECTION>>>".encode())
+                    self.socket.close()
+                    break
+                self.sig.emit(incoming)
+        print("Connection Ended")
+        self.socket.close()
+
 
 class LineText(QLineEdit):
     def __init__(self, callback):
@@ -91,14 +112,19 @@ class Application():
                 self.status.setText("Awaiting Connection")
                 self.connected = True
                 self.toggle_buttons()
+                time.sleep(1)
                 self.socket.bind(("0.0.0.0", int(port)))
                 self.socket.listen()
                 conn, client = self.socket.accept()
                 self.status.setText("Connection made with " + str(client))
-                self.socket = conn
-                thread = threading.Thread(target=self.listen, args=(1,))
-                thread.start()
-                print("sadasddsa")
+                self.listen_thread = ListenThread(conn)
+                print("I'm after the thread")
+                self.listen_thread.start()
+                self.listen_thread.listen()
+                print("I'm after the thread")
+                
+                self.listen_thread.finished.connect(self.connection_closed)
+                self.listen_thread.sig.connect(self.new_mes)
             except:
                 self.connected = False
                 self.toggle_buttons()
@@ -124,30 +150,37 @@ class Application():
                 self.status.setText("Connected to "+addr)
                 self.connected = True
                 self.toggle_buttons()
-                thread = threading.Thread(target=self.listen, daemon=True)
-                thread.start()
+                self.listen_thread = ListenThread(self.socket)
+                print("I'm after the thread")
+                self.listen_thread.start()
+                self.listen_thread.listen()
+                print("I'm after the thread")
+                self.listen_thread.finished.connect(self.connection_closed)
+                self.listen_thread.sig.connect(self.new_mes)
+                # thread = threading.Thread(target=self.listen, daemon=True)
+                # thread.start()
             except ConnectionRefusedError:
                 self.status.setText("Connection Failed. Please try again")
             except Exception:
                 self.status.setText("Unknown Error has occured.")
                 traceback.print_exc(file=sys.stdout)
-            
-    def listen(self, *args):
-        with self.socket:
-            while(True):
-                print("I am here")
-                incoming = self.socket.recv(10000).decode()
-                self.incoming_text.insertHtml("<b> Friend: </b>" + incoming)
-                self.incoming_text.insertPlainText("\n")
 
-        print("Connection Ended")
-        self.socket.close()
+    def new_mes(self, mes):
+        self.incoming_text.insertHtml(mes)
+        self.incoming_text.insertPlainText("\n")
 
     def end_connection(self):
-        #TODO: Close socket
+        self.incoming_text.insertHtml("<b> Connection Close </b>")
         self.connected = False
         self.toggle_buttons()
         self.status.setText("Host or Connect")
+        self.socket.sendall("<<<END CONNECTION>>>".encode())
+        self.socket.close()
+
+    def connection_closed(self):
+        self.incoming_text.insertHtml("<b> Connection Close </b>")
+        self.connected = False
+        self.toggle_buttons()
 
     def toggle_buttons(self):
         self.host_button.setDisabled(self.connected)
@@ -160,7 +193,7 @@ class Application():
             self.incoming_text.insertHtml("<b> You: </b>" + self.mes_text.text())
             self.incoming_text.insertPlainText("\n")
 
-            self.socket.sendall(self.mes_text.text().encode())
+            self.socket.sendall(("<b> Friend: </b>" + self.mes_text.text()).encode())
 
             self.mes_text.setText("")
 
