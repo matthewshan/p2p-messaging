@@ -9,18 +9,20 @@ class ListenThread(QThread):
         QThread.__init__(self)
         self.socket = socket
 
-    def listen(self):
+    def run(self):
         with self.socket:
             while(True):
-                print("while")
-                incoming = self.socket.recv(32000).decode()
+                try:
+                    incoming = self.socket.recv(32000).decode()
+                except:
+                    self.socket.close()
+                    return
                 if incoming == "<<<END CONNECTION>>>":
                     self.socket.sendall("<<<END CONNECTION>>>".encode())
                     self.socket.close()
                     break
                 self.sig.emit(incoming)
         print("Connection Ended")
-        self.socket.close()
 
 
 class LineText(QLineEdit):
@@ -108,21 +110,24 @@ class Application():
         if ok and (not port.isdigit() or not(int(port) >= 1024 and int(port) <= 65535)):
             self.host()
         elif ok and port:
+            self.status.setText("Awaiting Connection")
+            self.connected = True
+            self.toggle_buttons()
             try:
-                self.status.setText("Awaiting Connection")
-                self.connected = True
-                self.toggle_buttons()
-                time.sleep(1)
+                # Wait for new connection
                 self.socket.bind(("0.0.0.0", int(port)))
                 self.socket.listen()
                 conn, client = self.socket.accept()
+                self.socket.close()
+                self.socket = conn
                 self.status.setText("Connection made with " + str(client))
+        
+                self.incoming_text.insertHtml("<b> Connection Formed </b>")
+                self.incoming_text.insertPlainText("\n")
+
+                # Listening Logic 
                 self.listen_thread = ListenThread(conn)
-                print("I'm after the thread")
                 self.listen_thread.start()
-                self.listen_thread.listen()
-                print("I'm after the thread")
-                
                 self.listen_thread.finished.connect(self.connection_closed)
                 self.listen_thread.sig.connect(self.new_mes)
             except:
@@ -130,8 +135,6 @@ class Application():
                 self.toggle_buttons()
                 self.status.setText("There was an issue hosting... Please try again")
                 traceback.print_exc(file=sys.stdout)
-            
-            print(port)
 
 
     def connect(self):
@@ -148,17 +151,14 @@ class Application():
             try:
                 self.socket.connect((addr_l[0], int(addr_l[1])))
                 self.status.setText("Connected to "+addr)
+                self.incoming_text.insertHtml("<b> Connection Formed </b>")
+                self.incoming_text.insertPlainText("\n")
                 self.connected = True
                 self.toggle_buttons()
                 self.listen_thread = ListenThread(self.socket)
-                print("I'm after the thread")
                 self.listen_thread.start()
-                self.listen_thread.listen()
-                print("I'm after the thread")
                 self.listen_thread.finished.connect(self.connection_closed)
                 self.listen_thread.sig.connect(self.new_mes)
-                # thread = threading.Thread(target=self.listen, daemon=True)
-                # thread.start()
             except ConnectionRefusedError:
                 self.status.setText("Connection Failed. Please try again")
             except Exception:
@@ -170,17 +170,17 @@ class Application():
         self.incoming_text.insertPlainText("\n")
 
     def end_connection(self):
-        self.incoming_text.insertHtml("<b> Connection Close </b>")
-        self.connected = False
-        self.toggle_buttons()
-        self.status.setText("Host or Connect")
         self.socket.sendall("<<<END CONNECTION>>>".encode())
-        self.socket.close()
+        
 
     def connection_closed(self):
         self.incoming_text.insertHtml("<b> Connection Close </b>")
+        self.incoming_text.insertPlainText("\n\n")
+        self.socket.close()
         self.connected = False
         self.toggle_buttons()
+        self.status.setText("Host or Connect")
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     def toggle_buttons(self):
         self.host_button.setDisabled(self.connected)
@@ -198,8 +198,6 @@ class Application():
             self.mes_text.setText("")
 
 
-# window = MainWindow()
-# window.show()
 app = Application()
 
 app.q_app.exec_()
